@@ -31,22 +31,26 @@ namespace ThrottleControlledAvionics
 		}
 		static Config MAN { get { return Globals.Instance.MAN; } }
 
+        public enum Stage { WAITING, IN_PROGRESS, FINISHED }
+
 		public ManeuverAutopilot(ModuleTCA tca) : base(tca) {}
 
 		ThrottleControl THR;
 
 		ManeuverNode Node;
-		double InitialDeltaV;
-		double ThresholdDeltaV;
 		PatchedConicSolver Solver { get { return VSL.vessel.patchedConicSolver; } }
 
 		public double NodeUT { get { return Node != null? Node.UT : -1; } }
 		public Vector3d NodeDeltaV { get; private set; }
+        public CelestialBody NodeCB { get; private set; }
+        public Orbit TargetOrbit { get; private set; }
+        public Stage ManeuverStage { get; private set; }
 
 		ManeuverExecutor Executor;
 		public float MinDeltaV = 1;
-		bool within_threshold;
-		double min_deltaV = double.MaxValue;
+
+        public void AddCourseCorrection(Vector3d dV)
+        { Executor.AddCourseCorrection(dV); }
 
         public void UpdateNode()
         {
@@ -57,25 +61,32 @@ namespace ThrottleControlledAvionics
         void update_maneuver_node()
         {
             Node = Solver.maneuverNodes[0];
-            InitialDeltaV = Node.DeltaV.magnitude;
-            ThresholdDeltaV = Math.Min(InitialDeltaV, 10);
             NodeDeltaV = Node.GetBurnVector(VSL.orbit);
-            if(VSL.Engines.MaxDeltaV < InitialDeltaV)
+            NodeCB = Node.patch.referenceBody;
+            TargetOrbit = Node.nextPatch;
+            if(VSL.Engines.MaxDeltaV < Node.DeltaV.magnitude)
                 Status("yellow", "WARNING: there may be not enough propellant for the maneuver");
         }
 
         public override void Init()
 		{
 			base.Init();
-			MinDeltaV = GLB.THR.MinDeltaV;
+            MinDeltaV = GLB.THR.MinDeltaV;
 			CFG.AP1.AddHandler(this, Autopilot1.Maneuver);
 			Executor = new ManeuverExecutor(TCA);
-		}
+            Executor.ThrustWhenAligned = true;
+            Executor.StopAtMinimum = true;
+        }
+
+        public override void Disable()
+        {
+            CFG.AP1.OffIfOn(Autopilot1.Maneuver);
+        }
 
 		protected override void UpdateState()
 		{ 
 			base.UpdateState();
-			IsActive &= Node != null && VSL.Engines.HaveThrusters;
+            IsActive &= Node != null;
 			ControlsActive &= IsActive || TCAScenario.HavePatchedConics && VSL.Engines.HaveThrusters && VSL.HasManeuverNode;
 		}
 
@@ -85,6 +96,7 @@ namespace ThrottleControlledAvionics
 			{
 			case Multiplexer.Command.Resume:
 			case Multiplexer.Command.On:
+                ManeuverStage = Stage.WAITING;
 				if(!TCAScenario.HavePatchedConics)
 				{
 					Status("yellow", "WARNING: maneuver nodes are not yet available. Upgrade the Tracking Station.");
@@ -96,8 +108,6 @@ namespace ThrottleControlledAvionics
 				VSL.Controls.StopWarp();
 				CFG.AT.On(Attitude.ManeuverNode);
                 update_maneuver_node();
-				min_deltaV = double.MaxValue;
-				within_threshold = false;
 				THR.Throttle = 0;
 				CFG.DisableVSC();
 				break;
@@ -107,88 +117,109 @@ namespace ThrottleControlledAvionics
                 if(!CFG.WarpToNode && TimeWarp.CurrentRateIndex > 0)
                     TimeWarp.SetRate(0, false);
 				CFG.AT.On(Attitude.KillRotation);
-				reset();
+				Reset();
 				break;
 			}
 		}
 
-		protected override void reset()
+		protected override void Reset()
 		{
-			base.reset();
+			base.Reset();
 			if(Working) THR.Throttle = 0;
 			if(CFG.AT[Attitude.ManeuverNode])
 				CFG.AT.On(Attitude.KillRotation);
-			CFG.AP1.OffIfOn(Autopilot1.Maneuver);
 			Executor.Reset();
 			NodeDeltaV = Vector3d.zero;
-			MinDeltaV = GLB.THR.MinDeltaV;
-			min_deltaV = double.MaxValue;
-			within_threshold = false;
+            NodeCB = null;
+            MinDeltaV = GLB.THR.MinDeltaV;
 			VSL.Info.Countdown = 0;
 			VSL.Info.TTB = 0;
 			Working = false;
 			Node = null;
 		}
 
+        public static Vector3d Orbital2NodeDeltaV(Orbit o, Vector3d orbitalDeltaV, double UT)
+        {
+            var norm = o.GetOrbitNormal().normalized;
+            var prograde = o.getOrbitalVelocityAtUT(UT).normalized;
+            var radial = Vector3d.Cross(prograde, norm).normalized;
+            return new Vector3d(Vector3d.Dot(orbitalDeltaV, radial),
+                                Vector3d.Dot(orbitalDeltaV, norm),
+                                Vector3d.Dot(orbitalDeltaV, prograde));
+        }
+
 		public static void AddNode(VesselWrapper VSL, Vector3d dV, double UT)
 		{
 			var node = VSL.vessel.patchedConicSolver.AddManeuverNode(UT);
-			var norm = node.patch.GetOrbitNormal().normalized;
-			var prograde = node.patch.getOrbitalVelocityAtUT(UT).normalized;
-			var radial = Vector3d.Cross(prograde, norm).normalized;
-			node.DeltaV = new Vector3d(Vector3d.Dot(dV, radial),
-			                           Vector3d.Dot(dV, norm),
-			                           Vector3d.Dot(dV, prograde));
+            node.DeltaV = Orbital2NodeDeltaV(node.patch, dV, UT);
 			VSL.vessel.patchedConicSolver.UpdateFlightPlan();
+//            VSL.Log("AddNode: {} : {}", UT, node.DeltaV);//debug
 		}
+
+        public static void AddNodeRaw(VesselWrapper VSL, Vector3d NodeV, double UT)
+        {
+            var node = VSL.vessel.patchedConicSolver.AddManeuverNode(UT);
+            node.DeltaV = NodeV;
+            VSL.vessel.patchedConicSolver.UpdateFlightPlan();
+//            VSL.Log("AddNodeRaw: {} : {}", UT, node.DeltaV);//debug
+        }
 
 		bool StartCondition(float dV)
 		{
 			if(Working) return true;
-			var ttb = VSL.Engines.TTB(dV);
-//            Log("dV {}, TTB {}", dV, ttb);//debug
-			if(float.IsNaN(ttb)) return false;
+			var ttb = VSL.Engines.TTB_Precise(dV);
+			if(float.IsNaN(ttb)) 
+            {
+                Log("WARNING: TTB is NaN: dV {}", dV);
+                return false;
+            }
 			VSL.Info.TTB = ttb;
 			var burn = Node.UT-VSL.Info.TTB/2f;
 			if(CFG.WarpToNode && VSL.Controls.WarpToTime < 0) 
 			{
 				if((burn-VSL.Physics.UT)/dV > MAN.WrapThreshold ||
 				   TCAScenario.HavePersistentRotation && burn-VSL.Physics.UT > 180+GLB.WRP.DewarpTime)
+                {
+                    VSL.Controls.NoDewarpOffset = true;
 					VSL.Controls.WarpToTime = burn-180;
+                }
 				else if(VSL.Controls.CanWarp) 
 					VSL.Controls.WarpToTime = burn-VSL.Controls.MinAlignmentTime;
 			}
 			VSL.Info.Countdown = burn-VSL.Physics.UT;
             //emergency dewarping
             if(!CFG.WarpToNode && TimeWarp.CurrentRate > 1 && VSL.Info.Countdown < GLB.WRP.DewarpTime)
-                TimeWarp.SetRate(0, true);
+                VSL.Controls.AbortWarp(true);
 			if(VSL.Info.Countdown > 0) return false;
 //            Log("burn {}, countdown {}", burn, VSL.Info.Countdown);//debug
 			VSL.Info.Countdown = 0;
+            ManeuverStage = Stage.IN_PROGRESS;
 			Working = true;
 			return true;
 		}
 
 		protected override void Update()
 		{
-			if(!IsActive) return;
-			if(!VSL.HasManeuverNode || Node != Solver.maneuverNodes[0]) { reset(); return; }
-			NodeDeltaV = Node.GetBurnVector(VSL.orbit);
-//            Log("Node.dV {}", NodeDeltaV);//debug
-			if(Executor.Execute(NodeDeltaV, MinDeltaV, StartCondition)) 
-			{
-				within_threshold |= Executor.RemainingDeltaV < ThresholdDeltaV;
-				if(within_threshold)
-				{
-					VSL.Controls.GimbalLimit = 0;
-					var dV = Executor.RemainingDeltaV;
-					if(dV < min_deltaV) { min_deltaV = dV; return; }
-					if(dV-min_deltaV < GLB.THR.MinDeltaV) return;
-				}
-				else return;
-			}
+			if(!VSL.HasManeuverNode || 
+               Node != Solver.maneuverNodes[0] ||
+               NodeCB != Node.patch.referenceBody) 
+            { 
+                Message("Maneuver has been interrupted.");
+                Disable();
+                return; 
+            }
+            if(!VSL.Engines.HaveThrusters && !VSL.Engines.HaveNextStageEngines)
+            {
+                Message("Out of fuel");
+                Disable();
+                return;
+            }
+            //update the node
+            NodeDeltaV = (TargetOrbit.GetFrameVelAtUT(NodeUT)-VSL.orbit.GetFrameVelAtUT(NodeUT)).xzy;
+            if(Executor.Execute(NodeDeltaV, MinDeltaV, StartCondition)) return;
+            ManeuverStage = Stage.FINISHED;
 			Node.RemoveSelf();
-			reset();
+            Disable();
 		}
 
 		public override void Draw()

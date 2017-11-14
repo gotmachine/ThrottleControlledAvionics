@@ -118,32 +118,120 @@ ALT
 
 ATCB
 {
-	PID
+	AngleThreshold = 50
+	MaxAttitudeError = 10
+	AttitudeErrorThreshold = 3
+	MaxTimeToAlignment = 15
+	DragResistanceF = 10
+
+	FastConfig
 	{
-		P = 5, 5, 5
-		I = 0.04, 0.04, 0.04
-		D = 5, 5, 5
+		atP_ErrThreshold = 0.7
+		atP_ErrCurve = 0.5
+		
+		atP_LowAA_Scale = 1.2
+		atP_LowAA_Curve = 0.8
+		atD_LowAA_Scale = 1
+		atD_LowAA_Curve = 0.5
+		
+		atP_HighAA_Scale = 0.7
+		atP_HighAA_Curve = 0.1
+		atP_HighAA_Max = 4
+		atD_HighAA_Scale = 1.0
+		atD_HighAA_Curve = 0.4
+		
+		atI_Scale = 1
+		atI_AV_Scale = 10
+		atI_ErrThreshold = 0.8
+		atI_ErrCurve = 2
+		
+		avP_MaxAA_Intersect = 5
+		avP_MaxAA_Inclination = 0.4
+		avP_MaxAA_Curve = 0.8
+		avP_Min = 0.2
+		
+		avI_Scale = 0.4
 	}
 	
-	MaxAA                  = 2
-	MinAAf                 = 0.5
-	MaxAAf                 = 2.5
-
-	AngularMf              = 0.001
-	InertiaFactor          = 10
-	MoIFactor              = 0.01
-	MinEf                  = 0.0001
-	MaxEf                  = 2
-	SlowTorqueF            = 0.06 //0.2
-	MaxSlowF               = 3
-	AALowPassF             = 1
+	MixedConfig
+	{
+		atP_ErrThreshold = 0.8
+		atP_ErrCurve = 0.5
+		
+		atP_LowAA_Scale = 0.2
+		atP_LowAA_Curve = 1.2
+		atD_LowAA_Scale = 1.2
+		atD_LowAA_Curve = 0.6
+		
+		atP_HighAA_Scale = 0.2
+		atP_HighAA_Curve = 0.3
+		atP_HighAA_Max = 4
+		atD_HighAA_Scale = 1.0
+		atD_HighAA_Curve = 0.4
+		
+		atI_Scale = 1
+		atI_AV_Scale = 10
+		atI_ErrThreshold = 0.8
+		atI_ErrCurve = 2
+		
+		avP_MaxAA_Intersect = 5
+		avP_MaxAA_Inclination = 0.4
+		avP_MaxAA_Curve = 0.8
+		avP_Min = 0.2
+		
+		avI_Scale = 0.4
+		
+		avP_A = 10
+		avP_B = 0.04
+		avP_C = -22
+		avP_D = 0.8
+		
+		avD_A = 0.6
+		avD_B = -0.01
+		avD_C = 0.5
+		avD_D = 0.7
+		avD_MaxAA_Curve = 0.8
+		
+		NoiseF_Scale = 50
+		NoiseF_Curve = 0.6
+		NoiseF_Min = 0.001
+	}
 	
-	AngleThreshold         = 60 //deg
-	MaxAttitudeError       = 10 //deg
-	AttitudeErrorThreshold = 3  //deg
-	MaxTimeToAlignment     = 15 //s
-	DragResistanceF        = 10
+	SlowConfig
+	{
+		avP_HighAA_Scale = 5
+		avD_HighAA_Intersect = 10
+		avD_HighAA_Inclination = 2
+		avD_HighAA_Max = 2
+		
+		avP_LowAA_Scale = 8
+		avD_LowAA_Intersect = 25
+		avD_LowAA_Inclination = 10
+		
+		avI_Scale = 0.0
+		
+		SlowTorqueF = 0.2
+		
+		NoiseF_Scale = 50
+		NoiseF_Curve = 0.6
+		NoiseF_Min = 0.001
+		
+		atP_Curve = 0
+		atP_Min = 0.1
+		atP_Max = 1.4
+	}
 	
+	atPID_Clamp = 31.41592653589793
+	avPID_Clamp = 1
+	avAction_Filter = 3
+	AxisCorrection = 3
+	AALowPassF = 1
+	
+	FastThreshold = 0.7   //% of the AA is instant
+	MixedThreshold = 0.3  //% of the AA is instant
+	SlowThreshold = 0.005 //% of the AA is instant
+	
+	//obsolete oscillation detector config
 	OD_low                 = 5   //Hz
 	OD_high                = 45  //Hz; note that frequency that are multiples of the physics framerate will produce high values in the spectrum given constant signal!!!
 	OD_bins                = 58  //fitted value to eliminate physics framerate harmonics
@@ -158,6 +246,13 @@ ATC
 	RollFilter = 0.5
 }
 
+BRC
+{
+
+	YawFactor = 60
+	DrawForwardDirection = true
+}
+
 TDC
 {
 	TWRf = 3
@@ -166,21 +261,37 @@ TDC
 
 HSC
 {
-	TranslationUpperThreshold  = 5
-	TranslationLowerThreshold  = 0.5
-	RotationLowerThreshold     = 0.05
-	RotationUpperThreshold     = 30
-	TranslationMaxAngle        = 80
-	RotationMaxAngle           = 15
-	
-	ManualTranslationIMinSpeed = 20
-	ManualTranslationThrustF   = 6
-		
-	ManualTranslationPID
+	NeededThrustPID
 	{
-		P = 0.05
-		I = 0.000001
-		D = 0.0
+		P = 0.03
+		I = 0.0
+		D = 0.002
+		Tau = 0.5
+	}
+	
+	TurnTime_Curve = 1.8
+
+	TranslationMaxDeltaV = 5
+	TranslationMinDeltaV = 0.5
+	TranslationMaxAngle = 80
+	
+	RotationMinDeltaV = 0.05
+	
+	ManualTranslation
+	{
+		ThrustF = 6
+		I_MinSpeed = 20
+		D_Max = 0.3
+		
+		Turn_MinLateralDeltaV = 10
+                Turn_MinDeltaV = 30
+		
+		PID
+		{
+			P = 0.05
+			I = 0.000001
+			D = 5
+		}
 	}
 
 	AccelerationFactor = 1
@@ -198,31 +309,6 @@ VTOL
 	MaxAngle = 45
 }
 
-BRC
-{
-	AAf_a = 1.701136
-	AAf_b = 0.027771
-	AAf_c = 0.733734
-
-	YawFactor = 60
-	DrawForwardDirection = true
-	
-	DirectionPID
-	{
-		P = 3.14159
-		I = 0.001
-		D = 1
-		Min = -3.14159
-		Max = 3.14159
-	}
-	
-	AV_PID
-	{
-		P = 1
-		I = 0.05
-		D = 0
-	}
-}
 
 CC
 {
@@ -240,7 +326,6 @@ PN
 	OnPathMinDistance    = 6
 	MinTime              = 5
 	
-	DistanceFactor       = 0.5
 	AngularAccelFactor   = 3
 	DirectNavThreshold   = 1
 	GCNavStep            = 0.1
@@ -267,9 +352,9 @@ PN
 	
 	DistancePID
 	{
-		P = 0.5
+		P = 0.2
 		I = 0
-		D = 0.5
+		D = 0
 	}
 	
 	CorrectionPID
@@ -289,12 +374,11 @@ PN
 
 LND
 {
-	MaxUnevenness        = 0.35
-	UnevennessThreshold  = 0.6
+	MaxUnevenness        = 0.4
 	MaxHorizontalTime    = 2
 	MinVerticalSpeed     = 5
 	WideCheckAltitude    = 100
-	MaxWideCheckAltitude = 1000
+	MaxWideCheckAltitude = 5000
 	WideCheckLevel       = 7
 	NodeTargetRange      = 1
 	GearOnAtH            = 5
@@ -341,6 +425,7 @@ ANC
 
 TLA
 {
+	MinHSpeed = 0.1
 	MaxHSpeed = 10
 	MinVSpeed = 1
 	GearTimer = 1
@@ -374,8 +459,8 @@ STB
 
 THR
 {
-	MinDeltaV       = 0.1 //m/s
-	DeltaVThreshold = 10  //sec
+	MinDeltaV        = 0.1 //m/s
+	DeltaVThreshold  = 10  //sec
 	AttitudeDeadzone = 1  //deg
 }
 
@@ -392,9 +477,19 @@ TRA
 
 WRP
 {
-	DewarpTime = 20 //sec
+	DewarpTime = 10 //sec
 	MaxWarp    = 10000
 	FramesToSkip = 3
+}
+
+MAN
+{
+	WrapThreshold = 600 //s
+
+	//controls best engine cluster calculation
+	ClosestCluster   = 5   //s
+	EfficientCluster = 0.1 //fraction of vessel mass
+	EfficiencyWeight = 10  //how much the fuel mass will affect cluster selection
 }
 
 MVA
@@ -406,9 +501,6 @@ MVA
 TRJ
 {
 	dVtol              = 0.01  //m/s
-	dV4dRf             = 1e-4
-	MinPeA             = 10000 //m
-	MaxIterations      = 1000
 	PerFrameIterations = 5
 	ManeuverOffset     = 60   //s
 	CorrectionOffset   = 20   //s
@@ -426,6 +518,7 @@ LTRJ
 	FinalBrakeOffset   = 3    //s
 	ParachutesDeployOffset = 10 //s
 	
+	
 	CorrectionTimer    = 30   //s
 	CorrectionMinDv    = 1    //m/s
 	CorrectionThrustF  = 4
@@ -438,9 +531,12 @@ LTRJ
 	MaxDPressure       = 3     //kPa
 	MinDPressure       = 0.8   //kPa
 	MachThreshold      = 0.9
+	MinAerobrakeDensity = 0.4
 	
-	MaxScanningCycles  = 50
+	ScanningAngle      = 21
 	PointsPerFrame     = 5
+	AtmoTrajectoryResolution = 5
+	MaxCorrectionDist  = 1
 	
 	HeatingCoefficient = 0.02
 }
@@ -448,16 +544,25 @@ LTRJ
 DEO
 {
 	MinLandingAngle    = 20
-	MaxDynPressure     = 8
+	MaxLandingAngle    = 50
+	MaxDynPressure     = 0.9
 	EccSteps           = 10
 }
 
 BJ
 {
 	StartOffset      = 15  //s
-	StartInclination = 30  //deg
 	StartAltitude    = 50  //m
 	InclinationF     = 2
+	ObstacleOffset   = 50  //m
+	MinStartAngle    = 10  //deg
+	
+	FallCorrectionPID
+	{
+		P = 1
+		I = 1
+		D = 0
+	}
 }
 
 ORB

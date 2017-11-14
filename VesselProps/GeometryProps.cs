@@ -7,6 +7,7 @@
 // To view a copy of this license, visit http://creativecommons.org/licenses/by-sa/4.0/ 
 // or send a letter to Creative Commons, PO Box 1866, Mountain View, CA 94042, USA.
 //
+using System.Collections.Generic;
 using UnityEngine;
 using AT_Utils;
 
@@ -21,8 +22,11 @@ namespace ThrottleControlledAvionics
 		public Vector3 C { get; private set; } //center
 		public float   H { get; private set; } //height
 		public float   R { get; private set; } //radius
+        public float   E { get; private set; } //radius including engines' exhaust
 		public float   D { get; private set; } //diamiter
-		public float Area { get; private set; }
+        public Vector3 RelC { get; private set; } //center relative to CoM
+		public float   Area { get; private set; }
+        public float   AreaWithBrakes { get; private set; }
 		public Vector3 BoundsSideAreas { get; private set; }
 
 		public float DistToBounds(Vector3 world_point)
@@ -33,8 +37,9 @@ namespace ThrottleControlledAvionics
 			//update physical bounds
 			var b = vessel.Bounds(refT);
 			C = refT.TransformPoint(b.center);
-			H = Mathf.Abs(Vector3.Dot(refT.TransformDirection(b.extents), VSL.Physics.Up))+
-				Vector3.Dot(VSL.Physics.wCoM-C, VSL.Physics.Up);
+            RelC = C-VSL.vessel.CoM;
+			H = Mathf.Abs(Vector3.Dot(refT.TransformDirection(b.extents), VSL.Physics.Up)) -
+                Vector3.Dot(RelC, VSL.Physics.Up);
 			R = b.extents.magnitude;
 			D = R*2;
 			BoundsSideAreas = new Vector3(B.extents.y*B.extents.z, //right
@@ -53,8 +58,45 @@ namespace ThrottleControlledAvionics
 					b.Encapsulate(term);
 				}
 			}
+            E = b.extents.magnitude;
 			B = b;
 		}
+
+        Timer brakes_measured_timer = new Timer();
+        IEnumerator<YieldInstruction> measure_area_with_brakes_and_run(Callback action)
+        {
+            var brakes = VSL.vessel.ActionGroups[KSPActionGroup.Brakes];
+            VSL.BrakesOn();
+            brakes_measured_timer.Reset();
+            AreaWithBrakes = BoundsSideAreas.MinComponentF();
+            while(!brakes_measured_timer.TimePassed)
+            {
+                TCAGui.Status(0.1, "Testing aero-brakes...");
+                var min_area = BoundsSideAreas.MinComponentF();
+                if(min_area > AreaWithBrakes)
+                {
+                    AreaWithBrakes = min_area;
+                    brakes_measured_timer.Reset();
+                }
+                yield return null;
+            }
+            if(!brakes)
+                VSL.BrakesOn(false);
+            action();
+        }
+
+        public void MeasureAreaWithBrakesAndRun(Callback action)
+        {
+            if(CFG.AutoBrakes)
+            {
+                VSL.TCA.StartCoroutine(measure_area_with_brakes_and_run(action));
+                return;
+            }
+            Utils.Message("TCA is not allowed to use brakes. Check Advanced Tab.");
+            action();
+        }
+
+        public void ResetAreaWithBrakes() { AreaWithBrakes = 0; }
 
 		public float AreaInDirection(Vector3 wdir)
 		{
@@ -64,6 +106,12 @@ namespace ThrottleControlledAvionics
 				Mathf.Abs(Vector3.Dot(wdir, VSL.refT.up)),
 				Mathf.Abs(Vector3.Dot(wdir, VSL.refT.forward))));
 		}
+
+        public float MinArea
+        { get { return BoundsSideAreas.MinComponentF(); } }
+
+        public float MaxArea
+        { get { return BoundsSideAreas.MaxComponentF(); } }
 
 		public Vector3 MinAreaDirection
 		{
@@ -145,10 +193,11 @@ namespace ThrottleControlledAvionics
 		{
 			get
 			{
-				if(CFG.Target == null) return R;
+                var shift = RelC.magnitude;
+				if(CFG.Target == null) return E+shift;
 				var tgtVessel = CFG.Target.GetVessel();
-				if(tgtVessel == null) return R;
-				return R+tgtVessel.Radius();
+                if(tgtVessel == null) return E+shift;
+                return E+shift+tgtVessel.Radius(true);
 			}
 		}
 	}

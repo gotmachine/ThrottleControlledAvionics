@@ -72,6 +72,11 @@ namespace ThrottleControlledAvionics
 			sim = new AtmoSim(VSL);
 		}
 
+        public override void Disable()
+        {
+            CFG.VF.OffIfOn(VFlight.AltitudeControl);
+        }
+
 		protected override void UpdateState()
 		{ 
 			base.UpdateState();
@@ -95,7 +100,7 @@ namespace ThrottleControlledAvionics
 			switch(cmd)
 			{
 			case Multiplexer.Command.Resume:
-				NeedRadarWhenMooving();
+				NeedCPSWhenMooving();
 				break;
 
 			case Multiplexer.Command.On:
@@ -105,7 +110,7 @@ namespace ThrottleControlledAvionics
 				goto case Multiplexer.Command.Resume;
 
 			case Multiplexer.Command.Off:
-				UnregisterFrom<Radar>();
+				ReleaseCPS();
 				break;
 			}
 		}
@@ -115,15 +120,13 @@ namespace ThrottleControlledAvionics
 
 		protected override void Update()
 		{
-			if(!IsActive) return;
 			SetState(TCAState.AltitudeControl);
 			//calculate current altitude or apoapsis, if the vessel is moving upwards
 			var alt = VSL.Altitude.Absolute;
-			var ttAp = 0f;
 			if(VSL.VerticalSpeed.Absolute > 0 && !VSL.LandedOrSplashed)
 			{
+                var ttAp = VSL.VerticalSpeed.Absolute/VSL.Physics.G;
 				if(RAD != null && RAD.TimeAhead > 0 && RAD.TimeAhead < ttAp) ttAp = RAD.TimeAhead;
-				else ttAp = VSL.VerticalSpeed.Absolute/VSL.Physics.G;
 				alt = VSL.Altitude.Absolute+ttAp*(VSL.VerticalSpeed.Absolute - ttAp*VSL.Physics.G/2);
 //				CSV(CFG.DesiredAltitude, alt-VSL.Altitude.TerrainAltitude, VSL.Altitude.Relative, RAD.AltitudeAhead-VSL.Altitude.Absolute,
 //				    VSL.VSF, -VSL.Physics.G, ttAp, RAD.TimeAhead);//debug
@@ -248,61 +251,52 @@ namespace ThrottleControlledAvionics
 
 		public override void ProcessKeys()
 		{
-			update_altitude();
+            update_from_cfg();
 			if(GameSettings.THROTTLE_UP.GetKey())
-				altitude = Mathf.Lerp(CFG.DesiredAltitude, 
-				                      CFG.DesiredAltitude+10, 
-				                      CFG.ControlSensitivity);
+                Altitude.Value = Mathf.Lerp(CFG.DesiredAltitude, 
+                                            CFG.DesiredAltitude+10, 
+                                            CFG.ControlSensitivity);
 			else if(GameSettings.THROTTLE_DOWN.GetKey())
-				altitude = Mathf.Lerp(CFG.DesiredAltitude,
-				                      CFG.DesiredAltitude-10, 
-				                      CFG.ControlSensitivity);
-			else if(GameSettings.THROTTLE_FULL.GetKey())
-				UpDamper.Run(() => altitude = altitude+10);
-			else if(GameSettings.THROTTLE_CUTOFF.GetKey())
-				DownDamper.Run(() => altitude = altitude-10);
-			if(!altitude.Equals(CFG.DesiredAltitude)) set_altitude();
+                Altitude.Value = Mathf.Lerp(CFG.DesiredAltitude,
+                                            CFG.DesiredAltitude-10, 
+                                            CFG.ControlSensitivity);
+            else if(GameSettings.THROTTLE_FULL.GetKey())
+                UpDamper.Run(() => Altitude.Value += 10);
+            else if(GameSettings.THROTTLE_CUTOFF.GetKey())
+                DownDamper.Run(() => Altitude.Value -= 10);
+            if(!Altitude.Value.Equals(CFG.DesiredAltitude)) 
+                set_altitude();
 		}
 
 		#region GUI
-		float altitude;
-		string s_altitude = null;
+        readonly FloatField Altitude = new FloatField("F1");
 
-		void update_altitude()
-		{
-			if(s_altitude == null || !altitude.Equals(CFG.DesiredAltitude))
-				s_altitude = CFG.DesiredAltitude.ToString("F1");
-			altitude = CFG.DesiredAltitude;
-		}
+        void update_from_cfg()
+        {
+            if(!Altitude.Value.Equals(CFG.DesiredAltitude))
+                Altitude.Value = CFG.DesiredAltitude;
+        }
 
 		void set_altitude(VesselConfig cfg)
-		{ cfg.DesiredAltitude = altitude; cfg.BlockThrottle = true; }
+		{ cfg.DesiredAltitude = Altitude; cfg.BlockThrottle = true; }
 
 		void set_altitude()
 		{
 			TCA.SquadConfigAction(set_altitude);
-			s_altitude = altitude.ToString("F1");
+            set_altitude(CFG);
 		}
 
 		public override void Draw()
 		{
-			update_altitude();
+            update_from_cfg();
 			var above_ground = VSL.Altitude.AboveGround;
 			var style = above_ground? Styles.green : Styles.red;
-			GUILayout.Label(new GUIContent("Alt. (m):", above_ground? 
+            GUILayout.Label(new GUIContent("Alt. (m):", above_ground? 
 			                               "Desired altitude is above the ground" : 
 			                               "Warning! Desired altitude is below the ground"), 
-			                Styles.white, GUILayout.ExpandWidth(true));
-			s_altitude = GUILayout.TextField(s_altitude, style, GUILayout.ExpandWidth(true), GUILayout.MinWidth(60));
-			if(GUILayout.Button("Set", Styles.normal_button, GUILayout.ExpandWidth(false))) 
-			{
-				if(float.TryParse(s_altitude, out altitude)) set_altitude();
-				else altitude = CFG.DesiredAltitude;
-			}
-			if(GUILayout.Button("-10m", Styles.normal_button, GUILayout.ExpandWidth(false))) 
-			{ altitude -= 10; set_altitude(); }
-			if(GUILayout.Button("+10m", Styles.normal_button, GUILayout.ExpandWidth(false))) 
-			{ altitude += 10; set_altitude(); }
+                            style, GUILayout.ExpandWidth(true));
+            if(Altitude.Draw("", 10, "F0", style: style))
+                set_altitude();
 		}
 		#endregion
 	}

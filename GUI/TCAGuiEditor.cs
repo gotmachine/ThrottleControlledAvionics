@@ -26,11 +26,12 @@ namespace ThrottleControlledAvionics
 		static Texture2D CoM_Icon;
 
 		TCAPartsEditor PartsEditor;
+        SimpleWarning warning;
 
 		ModuleTCA TCA;
 		NamedConfig CFG;
 		readonly List<EngineWrapper> Engines = new List<EngineWrapper>();
-		readonly EnginesProps.EnginesDB ActiveEngines = new EnginesProps.EnginesDB();
+		readonly EnginesDB ActiveEngines = new EnginesDB();
 		static bool HaveSelectedPart { get { return EditorLogic.SelectedPart != null && EditorLogic.SelectedPart.potentialParent != null; } }
 
 		HighlightSwitcher TCA_highlight, Engines_highlight;
@@ -122,8 +123,9 @@ namespace ThrottleControlledAvionics
 			}
 			if(CFG == null)
 			{
-				CFG = new NamedConfig(ship.shipName);
-				CFG.EnginesProfiles.AddProfile(Engines);
+                CFG = NamedConfig.FromVesselConfig(ship.shipName, TCAScenario.GetDefaultConfig(ship.shipFacility));
+                if(CFG.EnginesProfiles.Empty)
+                    CFG.EnginesProfiles.AddProfile(Engines);
 			}
 			else CFG.ActiveProfile.Apply(Engines);
 			UpdateCFG(TCA_Modules);
@@ -265,16 +267,16 @@ namespace ThrottleControlledAvionics
 					selected_parts.ForEach(update_inertia_tensor);
 					ActiveEngines.SortByRole();
 					float max_limit, torque_error, angle_error;
-					var imbalance = TorqueProps.CalculateImbalance(ActiveEngines.Manual, ActiveEngines.UnBalanced);
+					var imbalance = TorqueProps.CalculateImbalance(true, ActiveEngines.Manual, ActiveEngines.UnBalanced);
 					if(ActiveEngines.Balanced.Count > 0)
 					{
-						EngineOptimizer.OptimizeLimitsForTorque(ActiveEngines.Balanced, Vector3.zero, imbalance, MoI, 
+                        EngineOptimizer.OptimizeLimitsForTorque(ActiveEngines.Balanced, Vector3.zero, imbalance, MoI, true, 
 						                                        out max_limit, out torque_error, out angle_error);
-						imbalance = TorqueProps.CalculateImbalance(ActiveEngines.Manual, ActiveEngines.UnBalanced, ActiveEngines.Balanced);
+                        imbalance = TorqueProps.CalculateImbalance(true, ActiveEngines.Manual, ActiveEngines.UnBalanced, ActiveEngines.Balanced);
 					}
 					if(ActiveEngines.Steering.Count > 0)
 					{
-						if(!EngineOptimizer.OptimizeLimitsForTorque(ActiveEngines.Steering, Vector3.zero, imbalance, MoI, 
+                        if(!EngineOptimizer.OptimizeLimitsForTorque(ActiveEngines.Steering, Vector3.zero, imbalance, MoI, true, 
 						                                            out max_limit, out torque_error, out angle_error))
 						{
 							ActiveEngines.Steering.ForEach(e => e.limit = 0);
@@ -403,6 +405,9 @@ namespace ThrottleControlledAvionics
 						else if(GUILayout.Button("Edit Macros", Styles.active_button, GUILayout.ExpandWidth(true)))
 							TCAMacroEditor.Edit(CFG);
 					}
+                    if(GUILayout.Button(new GUIContent("Save As Default", "Save current configuration as default for new ships in this facility (VAB/SPH)"),
+                                        Styles.active_button, GUILayout.ExpandWidth(true)))
+                        warning.Show(true);
 				}
 				GUILayout.EndHorizontal();
 				GUILayout.BeginHorizontal();
@@ -565,6 +570,13 @@ namespace ThrottleControlledAvionics
 				                 Title,
 				                 GUILayout.Width(width),
 				                 GUILayout.Height(height)).clampToScreen();
+            if(warning.doShow)
+            {
+                var facility = EditorLogic.fetch.ship.shipFacility;
+                warning.Draw("Are you sure you want to save current ship configuration as default for "+facility+"?");
+                if(warning.Result == SimpleDialog.Answer.Yes) 
+                    TCAScenario.UpdateDefaultConfig(facility, CFG);
+            }
 			PartsEditor.Draw();
 			if(show_imbalance && ActiveEngines.Count > 0)
 			{

@@ -8,9 +8,6 @@
 // or send a letter to Creative Commons, PO Box 1866, Mountain View, CA 94042, USA.
 
 using System;
-using System.Linq;
-using System.Collections;
-using System.Collections.Generic;
 using UnityEngine;
 using AT_Utils;
 
@@ -30,6 +27,7 @@ namespace ThrottleControlledAvionics
 		[Persistent] public bool Movable;
 		[Persistent] public bool Pause;
 		[Persistent] public bool Land;
+        [Persistent] public bool Valid = true;
 		//target proxy
 		[Persistent] public ProtoTargetInfo TargetInfo = new ProtoTargetInfo();
 		ITargetable target;
@@ -57,33 +55,36 @@ namespace ThrottleControlledAvionics
 		public WayPoint(Vector3d worldPos, CelestialBody body) : this(new Coordinates(worldPos, body)) {}
 		public WayPoint(FinePrint.Waypoint wp) : this(new Coordinates(wp.latitude, wp.longitude, wp.altitude+wp.height)) { Name = wp.FullName; }
 
-		//using Haversine formula (see http://www.movable-type.co.uk/scripts/latlong.html)
-		public double AngleTo(double lat, double lon)
-		{
-			var lat1 = Pos.Lat*Mathf.Deg2Rad;
-			var lat2 = lat*Mathf.Deg2Rad;
-			var dlat = lat2-lat1;
-			var dlon = (lon-Pos.Lon)*Mathf.Deg2Rad;
-			var a = (1-Math.Cos(dlat))/2 + Math.Cos(lat1)*Math.Cos(lat2)*(1-Math.Cos(dlon))/2;
-			return 2 * Math.Atan2(Math.Sqrt(a), Math.Sqrt(1-a));
-		}
-		public double AngleTo(Coordinates c) { return AngleTo(c.Lat, c.Lon); }
-		public double AngleTo(WayPoint wp) { return AngleTo(wp.Pos); }
-		public double AngleTo(Vessel vsl) { return AngleTo(vsl.latitude, vsl.longitude); }
-		public double AngleTo(VesselWrapper vsl) { return AngleTo(vsl.vessel.latitude, vsl.vessel.longitude); }
-		public Vector3 VectorTo(Vessel vsl) { return vsl.transform.position-GetTransform().position; }
-		public float  DirectDistanceTo(Vessel vsl) { return VectorTo(vsl).magnitude; }
+        public WayPoint CopyMovable()
+        {
+            var wp = new WayPoint(Pos);
+            wp.Name = Name;
+            wp.Movable = true;
+            return wp;
+        }
+
+        public double AngleTo(double lat, double lon) { return Pos.AngleTo(lat, lon); }
+		public double AngleTo(Coordinates c) { return Pos.AngleTo(c); }
+		public double AngleTo(WayPoint wp) { return Pos.AngleTo(wp.Pos); }
+		public double AngleTo(Vessel vsl) { return Pos.AngleTo(vsl.latitude, vsl.longitude); }
+		public double AngleTo(VesselWrapper vsl) { return Pos.AngleTo(vsl.vessel.latitude, vsl.vessel.longitude); }
+
+        public Vector3  VectorTo(Vessel vsl) { return vsl.transform.position-GetTransform().position; }
+        public Vector3  VectorTo(VesselWrapper VSL) { return VSL.Physics.wCoM-WorldPos(VSL.Body); }
+        public Vector3d VectorTo(WayPoint wp, CelestialBody body) { return wp.WorldPos(body)-WorldPos(body); }
+
 		public double DistanceTo(WayPoint wp, CelestialBody body) { return AngleTo(wp)*body.Radius; }
 		public double DistanceTo(Vessel vsl) { return AngleTo(vsl)*vsl.mainBody.Radius; }
 		public double DistanceTo(VesselWrapper VSL) { return AngleTo(VSL)*VSL.Body.Radius; }
-		public double RelDistanceTo(VesselWrapper VSL) { return AngleTo(VSL)*VSL.Body.Radius/VSL.Geometry.R; }
+
+        public float  DirectDistanceTo(Vessel vsl) { return VectorTo(vsl).magnitude; }
+        public double RelDistanceTo(VesselWrapper VSL) { return AngleTo(VSL)*VSL.Body.Radius/VSL.Geometry.R; }
 		public bool   CloseEnough(VesselWrapper VSL) { return RelDistanceTo(VSL)-1 < Radius; }
+
 		public double SurfaceAlt(CelestialBody body) { return Pos.SurfaceAlt(body); }
-		public Vector3d RelSurfPos(CelestialBody body) { return body.GetRelSurfacePosition(Pos.Lat, Pos.Lon, Pos.Alt); }
-		public Vector3d RelOrbPos(CelestialBody body) { return RelSurfPos(body).xzy; }
-		public Vector3d WorldPos(CelestialBody body) { return body.GetWorldSurfacePosition(Pos.Lat, Pos.Lon, Pos.Alt); }
-		public Vector3d VectorTo(WayPoint wp, CelestialBody body) { return wp.RelSurfPos(body)-RelSurfPos(body); }
-		public Vector3d VectorTo(VesselWrapper VSL, CelestialBody body) { return VSL.Physics.wCoM-WorldPos(body); }
+        public Vector3d SurfPos(CelestialBody body) { return Pos.SurfPos(body); }
+        public Vector3d OrbPos(CelestialBody body) { return Pos.OrbPos(body); }
+        public Vector3d WorldPos(CelestialBody body) { return Pos.WorldPos(body); }
 
 		public static double BearingTo(double lat1, double lat2, double dlon)
 		{
@@ -127,13 +128,13 @@ namespace ThrottleControlledAvionics
 		{ 
 			if(target != null) UpdateCoordinates(VSL.Body);
 			else if(TargetInfo.targetType != ProtoTargetInfo.Type.Null && 
-			   HighLogic.LoadedSceneIsFlight)
+                    HighLogic.LoadedSceneIsFlight)
 			{
 				target = TargetInfo.FindTarget();
 				if(target == null) 
 				{
-					TargetInfo.targetType = ProtoTargetInfo.Type.Null;
-					Name += " last location";
+                    TargetInfo.targetType = ProtoTargetInfo.Type.Null;
+                    Valid = false;
 				}
 				else UpdateCoordinates(VSL.Body);
 			}
@@ -175,8 +176,8 @@ namespace ThrottleControlledAvionics
 				return;
 			}
 			TargetInfo.targetType = ProtoTargetInfo.Type.Null;
-			Name += " last location";
 			target = null;
+            Valid = false;
 		}
 
 		public string GetName() { return Name; }
@@ -216,6 +217,9 @@ namespace ThrottleControlledAvionics
 				((wp.IsProxy && IsProxy && wp.target == target) ||
 				 Pos.Equals(wp.Pos));
 		}
+
+        public static implicit operator bool(WayPoint wp)
+        { return wp != null && wp.Valid; }
 	}
 }
 

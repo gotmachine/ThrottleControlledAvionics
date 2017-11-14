@@ -118,7 +118,7 @@ namespace ThrottleControlledAvionics
 				if(!vel.IsZero())
 				{
 					var norm = VesselOrbit.GetOrbitNormal();
-					var dFi = (90-Vector3d.Angle(norm, target))*Mathf.Deg2Rad;
+					var dFi = (90-Utils.Angle2(norm, target))*Mathf.Deg2Rad;
 					vel += norm*Math.Sin(dFi)*vel.magnitude*startF
 						*Utils.Clamp(VSL.VerticalSpeed.Absolute/VSL.Physics.G-MinClimbTime, 0, 100)
 						*Utils.ClampL(Vector3d.Dot(hv, VesselOrbit.vel.normalized), 0);
@@ -143,7 +143,7 @@ namespace ThrottleControlledAvionics
 			if(CircularizationOffset < 0)
 			{
 				ApAUT = VSL.Physics.UT+VesselOrbit.timeToAp;
-				CircularizationOffset = VSL.Engines.TTB((float)TrajectoryCalculator.dV4C(VesselOrbit, hV(ApAUT), ApAUT).magnitude)/2;
+				CircularizationOffset = VSL.Engines.TTB_Precise((float)TrajectoryCalculator.dV4C(VesselOrbit, hV(ApAUT), ApAUT).magnitude)/2;
 			}
 			return VesselOrbit.timeToAp > ApA_offset+CircularizationOffset &&
 				Body.atmosphere && VesselOrbit.radius < Body.Radius+Body.atmosphereDepth;

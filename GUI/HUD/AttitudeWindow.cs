@@ -58,9 +58,18 @@ namespace ThrottleControlledAvionics
 
 		class Cues : ControlSubwindow
 		{
+            #if DEBUG
+            AttitudeControl ATC;
+            #endif
+
 			protected override void MainWindow(int windowID)
 			{
 				GUILayout.BeginVertical();
+                #if DEBUG
+                ATC.DrawDebugLines();
+                Utils.ButtonSwitch("Mouse", ref ATC.FollowMouse, "Follow mouse", GUILayout.ExpandWidth(false));
+                Utils.ButtonSwitch("Gimball", ref AttitudeControlBase.UseGimball, "Use gimball", GUILayout.ExpandWidth(false));
+                #endif
 				GUILayout.BeginHorizontal();
 				if(Utils.ButtonSwitch("Kill", CFG.AT[Attitude.KillRotation], "Kill rotation", GUILayout.ExpandWidth(false)))
 					CFG.AT.XToggle(Attitude.KillRotation);
@@ -126,9 +135,9 @@ namespace ThrottleControlledAvionics
 			}
 		}
 
-		AttitudeControl ATC;
+        #pragma warning disable 169
+        AttitudeControl ATC;
 
-		#pragma warning disable 169
 		[SubwindowSpec(AnchorPosition.BottomRight, -0.1f, -1, xRelative = true, yRelative = true)]
 		Cues cues;
 
@@ -144,6 +153,7 @@ namespace ThrottleControlledAvionics
 		{
             #if DEBUG
             ATC.DrawDebugLines();
+            Utils.GLVec(VSL.refT.position, VSL.WorldDir(VSL.OnPlanetParams.MaxAeroForceL)*10, Color.magenta);
             #endif
 			if(GUILayout.Button(new GUIContent("T-SAS", "Push to toggle attitude controls"), 
 			                    CFG.AT && !VSL.AutopilotDisabled? Styles.cyan : Styles.white, GUILayout.ExpandWidth(false)))

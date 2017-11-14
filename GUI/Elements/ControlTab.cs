@@ -69,8 +69,6 @@ namespace ThrottleControlledAvionics
 	/// </summary>
 	public abstract class ControlTab : DrawableComponent
 	{
-		protected TCAGui UI { get { return TCAGui.Instance; } }
-
 		GUIContent TabButtonContent = new GUIContent();
 		public int Index = -1;
 
@@ -78,7 +76,7 @@ namespace ThrottleControlledAvionics
 
 		public bool Enabled { get; protected set; }
 
-		public virtual bool Valid { get { return ThisModules.Count > 0; } }
+        public override bool Valid { get { return base.Valid && ThisModules.Count > 0; } }
 
 		protected ControlTab(ModuleTCA tca) : base(tca) {}
 

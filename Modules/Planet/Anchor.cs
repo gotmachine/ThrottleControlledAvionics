@@ -43,10 +43,15 @@ namespace ThrottleControlledAvionics
 			CFG.Nav.AddHandler(this, Navigation.Anchor, Navigation.AnchorHere);
 		}
 
+        public override void Disable()
+        {
+            CFG.Nav.OffIfOn(Navigation.Anchor, Navigation.AnchorHere);
+        }
+
 		protected override void UpdateState() 
 		{ 
 			base.UpdateState();
-			IsActive &= VSL.OnPlanet && !VSL.LandedOrSplashed && CFG.Nav.Any(Navigation.Anchor, Navigation.AnchorHere); 
+            IsActive &= CFG.Anchor != null && VSL.OnPlanet && !VSL.LandedOrSplashed && CFG.Nav.Any(Navigation.Anchor, Navigation.AnchorHere); 
 		}
 
 		public void AnchorCallback(Multiplexer.Command cmd)
@@ -74,6 +79,7 @@ namespace ThrottleControlledAvionics
 			if(cmd == Multiplexer.Command.On)
 			{
 				CFG.Anchor = new WayPoint(VSL.Physics.wCoM, VSL.Body);
+                CFG.Anchor.Pos.SetAlt2Surface(VSL.Body);
 				CFG.Anchor.Movable = true;
 			}
 			AnchorCallback(cmd);
@@ -81,7 +87,6 @@ namespace ThrottleControlledAvionics
 
 		protected override void Update()
 		{
-			if(!IsActive || CFG.Anchor == null) return;
 			if(VSL.HorizontalSpeed > ANC.MaxSpeed)
 				CFG.HF.OnIfNot(HFlight.NoseOnCourse);
 			else CFG.HF.OnIfNot(HFlight.Move);
@@ -104,7 +109,7 @@ namespace ThrottleControlledAvionics
 				pid.D = 0;
 			}
 			// CFG.Anchor.AbsRadius*Mathf.Pow(real_dist/CFG.Anchor.AbsRadius, ANC.DistanceCurve);
-			pid.Update(distance*ANC.DistanceF/(VSL.Engines.Slow? 1+VSL.Torque.EnginesResponseTimeM*ANC.SlowTorqueF : 1f));
+            pid.Update(distance*ANC.DistanceF/(VSL.Torque.Slow? 1+VSL.Torque.EnginesResponseTimeM*ANC.SlowTorqueF : 1f));
 			VSL.HorizontalSpeed.SetNeeded(vdir*pid.Action);
 //			CSV(pid.P, pid.D, distance, real_dist, pid.Action);//debug
 		}

@@ -10,6 +10,7 @@
 using System;
 using System.Linq;
 using System.Collections.Generic;
+using UnityEngine;
 using AT_Utils;
 
 namespace ThrottleControlledAvionics
@@ -50,6 +51,8 @@ namespace ThrottleControlledAvionics
 			node.Save(Globals.Instance.PluginFolder(MACROSNAME));
 		}
 
+        public static VesselConfig VAB_DefaultConfig { get; private set; } = new VesselConfig();
+        public static VesselConfig SPH_DefaultConfig { get; private set; } = new VesselConfig();
 		public static Dictionary<Guid, VesselConfig> Configs = new Dictionary<Guid, VesselConfig>();
 		public static SortedList<string, NamedConfig> NamedConfigs = new SortedList<string, NamedConfig>();
 		public static bool ConfigsLoaded { get; private set; }
@@ -105,6 +108,20 @@ namespace ThrottleControlledAvionics
 				old.CopyFrom(config);
 			else Configs.Add(config.VesselID, config);
 		}
+
+        public static VesselConfig GetDefaultConfig(EditorFacility facility)
+        {
+            return facility == EditorFacility.SPH?
+                SPH_DefaultConfig : VAB_DefaultConfig;
+        }
+
+        public static void UpdateDefaultConfig(EditorFacility facility, VesselConfig config)
+        {
+            if(facility == EditorFacility.SPH)
+                SPH_DefaultConfig.CopyFrom(config);
+            else 
+                VAB_DefaultConfig.CopyFrom(config);
+        }
 		#endregion
 
 		#region Save/Load
@@ -142,6 +159,8 @@ namespace ThrottleControlledAvionics
 					}
 				}
 			}
+            VAB_DefaultConfig.LoadFrom(node, "VAB_DefaultConfig");
+            SPH_DefaultConfig.LoadFrom(node, "SPH_DefaultConfig");
 			ConfigsLoaded = true;
 		}
 
@@ -159,7 +178,7 @@ namespace ThrottleControlledAvionics
 				foreach(var c in configs)
 				{
 					if(current_vessels.Contains(c.VesselID))
-						c.Save(n.AddNode(VesselConfig.NODE_NAME));
+						c.SaveInto(n);
 //					else Utils.Log("TCAScenario: SaveConfigs: vessel {} is not present in the game. " +
 //					               "Removing orphan configuration.", c.VesselID);
 				}
@@ -168,8 +187,10 @@ namespace ThrottleControlledAvionics
 			{
 				var n = node.AddNode(NAMED_NODE);
 				foreach(var c in NamedConfigs.Keys)
-					NamedConfigs[c].Save(n.AddNode(NamedConfig.NODE_NAME));
+					NamedConfigs[c].SaveInto(n);
 			}
+            VAB_DefaultConfig.SaveInto(node, "VAB_DefaultConfig");
+            SPH_DefaultConfig.SaveInto(node, "SPH_DefaultConfig");
 		}
 		#endregion
 
@@ -205,6 +226,37 @@ namespace ThrottleControlledAvionics
 			SaveConfigs(node);
 			Paths.SaveInto(node);
 		}
+
+        #if DEBUG
+        bool show;
+        Rect pos = new Rect();
+        void drawGlobalsUI(int windowID)
+        {
+            GUILayout.BeginVertical();
+            if(GUILayout.Button(show? "Hide" : "Show", Styles.active_button, GUILayout.ExpandWidth(true)))
+                show = !show;
+            if(show)
+            {
+                Globals.Instance.UI.Draw();
+                if(GUILayout.Button("Save", Styles.danger_button, GUILayout.ExpandWidth(true)))
+                    Globals.Instance.CreateDefaultOverride();
+            }
+            GUILayout.EndVertical();
+            GUIWindowBase.TooltipsAndDragWindow();
+        }
+
+        void OnGUI()
+        {
+            if(Event.current.type != EventType.Layout && Event.current.type != EventType.Repaint) return;
+            if(Globals.Instance != null && GUIWindowBase.HUD_enabled)
+            {
+                Styles.Init();
+                pos = GUILayout.Window(GetInstanceID(), pos, drawGlobalsUI, "Globals",
+                                       GUILayout.Width(600), GUILayout.Height(show? 400 : 50))
+                    .clampToScreen();
+            }
+        }
+        #endif
 	}
 }
 

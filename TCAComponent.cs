@@ -32,30 +32,40 @@ namespace ThrottleControlledAvionics
 		public void SetState(TCAState state) { VSL.State |= state; }
 		public bool IsStateSet(TCAState state) { return VSL.IsStateSet(state); }
 
+        public virtual bool Valid { get { return TCA != null && TCA.Valid; } }
+
 		protected SquadControl SQD;
 
 		protected TCAComponent(ModuleTCA tca) { TCA = tca; }
 
 		public void InitModuleFields() { TCA.InitModuleFields(this); }
 
+        public bool UI_Control { get { return TCA == TCAGui.Instance.TCA; } }
+
 		protected void Message(float duration, string msg, params object[] args)
-		{ if(VSL.IsActiveVessel) Utils.Message(duration, msg, args); }
+        { if(UI_Control) Utils.Message(duration, msg, args); }
 
 		protected void Message(string msg, params object[] args) { Message(5, msg, args); }
 
-		protected void ClearStatus() { if(VSL.IsActiveVessel) TCAGui.ClearStatus(); }
+        protected void ClearStatus() { if(UI_Control) TCAGui.ClearStatus(); }
 
 		protected void Status(double seconds, string msg, params object[] args)
-		{ if(VSL.IsActiveVessel) TCAGui.Status(seconds, msg, args); }
+        { if(UI_Control) TCAGui.Status(seconds, msg, args); }
 
 		protected void Status(string msg, params object[] args) 
 		{ Status(-1, msg, args); }
 
 		protected void Status(double seconds, string color, string msg, params object[] args)
-		{ if(VSL.IsActiveVessel) TCAGui.Status(seconds, color, msg, args); }
+        { if(UI_Control) TCAGui.Status(seconds, color, msg, args); }
 
 		protected void Status(string color, string msg, params object[] args) 
 		{ Status(-1, color, msg, args); }
+
+        protected void TmpStatus(string color, string msg, params object[] args)
+        { Status(1, color, msg, args); }
+
+        protected void TmpStatus(string msg, params object[] args)
+        { Status(1, msg, args); }
 
 		protected string LogTemplate(string msg)
 		{ return string.Format("{0}.{1}: {2}", VSL.vessel.vesselName, GetType().Name, msg); }
@@ -63,6 +73,9 @@ namespace ThrottleControlledAvionics
 		protected void Log(string msg, params object[] args) { Utils.Log(LogTemplate(msg), args); }
 
 		#if DEBUG
+        protected void AddDebugMessage(string msg, params object[] args)
+        { if(UI_Control) TCAGui.AddDebugMessage(msg, args); }
+
 		protected void LogFST(string msg, params object[] args) { DebugUtils.Log(LogTemplate(msg), args); }
 
 		protected void CSV(params object[] args)
@@ -75,14 +88,22 @@ namespace ThrottleControlledAvionics
 
 	public abstract class DrawableComponent : TCAComponent
 	{
+        protected TCAGui UI { get { return TCAGui.Instance; } }
 		protected DrawableComponent(ModuleTCA tca) : base(tca) {}
 		public abstract void Draw();
+        public virtual void OnRenderObject() {}
 	}
 
-	public class TCAModule : DrawableComponent
+	public abstract class TCAModule : DrawableComponent
 	{
 		public class ModuleConfig : ConfigNodeObject
 		{
+            public class MinMax : ConfigNodeObject
+            {
+                [Persistent] public float Min;
+                [Persistent] public float Max;
+                public MinMax(float min, float max) { Min = min; Max = max; }
+            }
 			public virtual void Init() {}
 		}
 
@@ -93,30 +114,44 @@ namespace ThrottleControlledAvionics
 		protected TCAModule(ModuleTCA tca) : base(tca) {}
 
 		public virtual void Init() { InitModuleFields(); LoadFromConfig(); }
-		public void OnFixedUpdate() 
-        { 
-            if(CFG.Enabled)
-            {
-                UpdateState(); 
-                Update(); 
-            }
-        }
-		public virtual void Reset() {}
+		public virtual void Cleanup() {}
 		public virtual void ClearFrameState() {}
-		public virtual void OnEnable(bool enabled) {}
+		public virtual void OnEnableTCA(bool enabled) {}
 		public virtual void ProcessKeys() {}
 		public override void Draw() {}
+        public abstract void Disable();
+        protected virtual void Resume() {}
+
+        protected void _Update(Action update_action)
+        {
+            var was_active = IsActive;
+            UpdateState();
+            if(IsActive)
+            {
+                if(!was_active)
+                    Resume();
+                update_action();
+            }
+            else if(was_active)
+                Disable();
+        }
+
+        public void OnFixedUpdate() 
+        { 
+            if(CFG.Enabled)
+                _Update(Update);
+        }
 
 		protected virtual void UpdateState() 
         { 
-            IsActive = VSL != null && CFG.Enabled; 
+            IsActive = VSL != null;
             ControlsActive = true; 
         }
 		protected virtual void Update() {}
-		protected virtual void reset() {}
+		protected virtual void Reset() {}
 
 		protected void SetTarget(WayPoint wp = null) { VSL.SetTarget(this, wp); }
-		protected void SetTarget(Vessel vsl) { SetTarget(new WayPoint(vsl)); }
+        protected void SetTarget(ITargetable t) { SetTarget(new WayPoint(t)); }
 		protected void UseTarget() { VSL.TargetUsers.Add(this); }
 		protected void StopUsingTarget() { VSL.TargetUsers.Remove(this); }
 
@@ -127,8 +162,23 @@ namespace ThrottleControlledAvionics
 			return srv != null && srv.Register(this, predicate);
 		}
 
-		public bool NeedRadarWhenMooving()
-		{ return RegisterTo<Radar>(vsl => vsl.HorizontalSpeed.MoovingFast); }
+		public bool NeedCPSWhenMooving()
+		{ 
+            var ret = RegisterTo<Radar>(vsl => vsl.HorizontalSpeed.MoovingFast); 
+            return RegisterTo<CollisionPreventionSystem>() && ret;
+        }
+
+        public bool NeedCPS()
+        {
+            var ret = RegisterTo<Radar>(); 
+            return RegisterTo<CollisionPreventionSystem>() && ret;
+        }
+
+        public void ReleaseCPS()
+        {
+            UnregisterFrom<Radar>();
+            UnregisterFrom<CollisionPreventionSystem>();
+        }
 
 		public bool UnregisterFrom<S>() 
 			where S : TCAService
@@ -162,6 +212,8 @@ namespace ThrottleControlledAvionics
 	{
 		protected AutopilotModule(ModuleTCA tca) : base(tca) {}
 
+        protected FlightCtrlState CS;
+
 		public override void Init() 
 		{ 
 			base.Init(); 
@@ -170,18 +222,18 @@ namespace ThrottleControlledAvionics
 		
 		}
 
-		public override void Reset() { VSL.vessel.OnAutopilotUpdate -= UpdateCtrlState; }
+		public override void Cleanup() { VSL.vessel.OnAutopilotUpdate -= UpdateCtrlState; }
 
 		public void UpdateCtrlState(FlightCtrlState s) 
         { 
             if(CFG.Enabled)
             {
-                UpdateState(); 
-                OnAutopilotUpdate(s); 
+                CS = s;
+                _Update(OnAutopilotUpdate);
             }
         }
 
-		protected abstract void OnAutopilotUpdate(FlightCtrlState s);
+		protected abstract void OnAutopilotUpdate();
 	}
 
 	public abstract class TCAService : TCAModule

@@ -18,15 +18,13 @@ namespace ThrottleControlledAvionics
 	[RequireModules(typeof(SASBlocker))]
 	[OverrideModules(typeof(BearingControl),
 	                 typeof(CruiseControl))]
-	public class VTOLControl : AttitudeControlBase
+    public class VTOLControl : GeneralAttitudeControl
 	{
 		public new class Config : ModuleConfig
 		{
 			[Persistent] public float MaxAngle = 45f;
 		}
 		static Config VTOL { get { return Globals.Instance.VTOL; } }
-
-		BearingControl BRC;
 
 		public VTOLControl(ModuleTCA tca) : base(tca) {}
 
@@ -54,6 +52,8 @@ namespace ThrottleControlledAvionics
 			}
 		}
 
+        public override void Disable() {}
+
 		protected override void UpdateState() 
 		{ 
 			base.UpdateState();
@@ -63,46 +63,39 @@ namespace ThrottleControlledAvionics
 		protected override void correct_steering()
 		{
 			if(BRC != null && BRC.IsActive)
-				steering = Vector3.ProjectOnPlane(steering, VSL.LocalDir(VSL.Engines.CurrentDefThrustDir));
+                steering = Vector3.ProjectOnPlane(steering, VSL.LocalDir(VSL.Engines.refT_thrust_axis));
 		}
 
-		protected override void OnAutopilotUpdate(FlightCtrlState s)
+		protected override void OnAutopilotUpdate()
 		{
-			if(!IsActive) return;
+            var needed_thrust = -VSL.Physics.Up;
+            rotation_axis = Vector3.zero;
 			if(VSL.HasUserInput) 
 			{ 
-				Quaternion rot = Quaternion.identity;
 				var angle = VTOL.MaxAngle*VSL.OnPlanetParams.TWRf;
-				var pitch_roll = Mathf.Abs(s.pitch)+Mathf.Abs(s.roll);
-				if(!s.pitch.Equals(0)) 
-					rot = Quaternion.AngleAxis(Mathf.Abs(s.pitch)/pitch_roll*s.pitch*angle, VSL.refT.right) * rot;
-				if(!s.roll.Equals(0)) 
-					rot = Quaternion.AngleAxis(Mathf.Abs(s.roll)/pitch_roll*s.roll*angle, VSL.Engines.refT_forward_axis) * rot;
-				if(!s.yaw.Equals(0))
-					rot = Quaternion.AngleAxis(s.yaw*60, VSL.Engines.CurrentDefThrustDir) * rot;
-				rot *= Quaternion.FromToRotation(-VSL.Physics.Up, VSL.Engines.CurrentDefThrustDir);
-				update_angular_error(rot);
-				steering = rotation2steering(world2local_rotation(rot));
-				VSL.Controls.SetAttitudeError(steering.magnitude*Mathf.Rad2Deg);
-				tune_steering();
+				var pitch_roll = Mathf.Abs(CS.pitch)+Mathf.Abs(CS.roll);
+                if(!CS.pitch.Equals(0)) 
+                    needed_thrust = Quaternion.AngleAxis(-Mathf.Abs(CS.pitch)/pitch_roll*CS.pitch*angle, VSL.refT.right) * needed_thrust;
+				if(!CS.roll.Equals(0)) 
+                    needed_thrust = Quaternion.AngleAxis(-Mathf.Abs(CS.roll)/pitch_roll*CS.roll*angle, VSL.Engines.refT_forward_axis) * needed_thrust;
+                compute_rotation(Rotation.Local(VSL.Engines.CurrentDefThrustDir, needed_thrust, VSL));
+				if(!CS.yaw.Equals(0))
+                {
+                    rotation_axis = (rotation_axis*VSL.Controls.AttitudeError/angle-VSL.LocalDir(needed_thrust.normalized*CS.yaw*Mathf.PI/3)).normalized;
+                    VSL.Controls.SetAttitudeError(Mathf.Min(VSL.Controls.AttitudeError+Math.Abs(CS.yaw)*30, 180));
+                }
+				compute_steering();
 				VSL.Controls.AddSteering(steering);
 				VSL.HasUserInput = false;
 				VSL.AutopilotDisabled = true;
-				s.yaw = s.pitch = s.roll = 0;
-				#if DEBUG
-				needed_thrust = rot.Inverse() * VSL.Engines.CurrentMaxThrustDir;
-				#endif
+				CS.yaw = CS.pitch = CS.roll = 0;
 			}
 			else if(!(VSL.LandedOrSplashed || CFG.AT))
 			{ 
-				#if DEBUG
-				needed_thrust = -VSL.Physics.Up;
-				#endif
-				compute_steering(Rotation.Local(VSL.Engines.CurrentDefThrustDir, -VSL.Physics.Up, VSL)); 
-				tune_steering();
+                compute_rotation(Rotation.Local(VSL.Engines.CurrentDefThrustDir, needed_thrust, VSL)); 
+				compute_steering();
 				VSL.Controls.AddSteering(steering);
 			}
-
 		}
 
 		#if DEBUG
@@ -112,16 +105,16 @@ namespace ThrottleControlledAvionics
 		{
 			base.Draw();
 			if(!IsActive || CFG.CTRL.Not(ControlMode.VTOL)) return;
-			if(!VSL.Engines.MaxThrust.IsZero())
-				Utils.GLVec(VSL.Physics.wCoM, VSL.Engines.MaxThrust.normalized*20, Color.red);
-			if(!needed_thrust.IsZero())
-				Utils.GLVec(VSL.Physics.wCoM, needed_thrust.normalized*20, Color.yellow);
-			if(!steering.IsZero())
-				Utils.GLVec(VSL.Physics.wCoM, VSL.WorldDir(steering.normalized*20), Color.cyan);
+            Utils.GLVec(VSL.refT.position, VSL.Engines.MaxThrust.normalized*20, Color.yellow);
+            Utils.GLVec(VSL.refT.position, needed_thrust.normalized*20, Color.red);
+            Utils.GLVec(VSL.refT.position, VSL.WorldDir(VSL.vessel.angularVelocity*20), Color.cyan);
+            Utils.GLVec(VSL.refT.position, VSL.WorldDir(rotation_axis*25), Color.green);
+//			if(!steering.IsZero())
+//				Utils.GLVec(VSL.Physics.wCoM, VSL.WorldDir(steering.normalized*20), Color.cyan);
 			
-			Utils.GLVec(VSL.Physics.wCoM, VSL.refT.up*3, Color.green);
-			Utils.GLVec(VSL.Physics.wCoM, VSL.refT.forward*3, Color.blue);
-			Utils.GLVec(VSL.Physics.wCoM, VSL.refT.right*3, Color.red);
+//			Utils.GLVec(VSL.Physics.wCoM, VSL.refT.up*3, Color.green);
+//			Utils.GLVec(VSL.Physics.wCoM, VSL.refT.forward*3, Color.blue);
+//			Utils.GLVec(VSL.Physics.wCoM, VSL.refT.right*3, Color.red);
 		}
 		#endif
 	}

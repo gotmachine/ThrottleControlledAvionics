@@ -40,7 +40,7 @@ namespace ThrottleControlledAvionics
 		[Persistent] public Vector3 Target;
 		[Persistent] public Stage stage;
 
-		public bool ShowEditor { get; private set; }
+		public bool ShowOptions { get; private set; }
 
 		double ApR { get { return TargetOrbit.ApA*1000+Body.Radius; } }
 		ToOrbitExecutor ToOrbit;
@@ -79,7 +79,7 @@ namespace ThrottleControlledAvionics
 				break;
 
 			case Multiplexer.Command.On:
-				reset();
+				Reset();
 				if(!check_patched_conics()) return;
 				Vector3d hVdir;
 				if(TargetOrbit.Inclination.Range > 1e-5f)
@@ -97,7 +97,7 @@ namespace ThrottleControlledAvionics
 				goto case Multiplexer.Command.Resume;
 
 			case Multiplexer.Command.Off:
-				reset();
+				Reset();
 				break;
 			}
 		}
@@ -119,9 +119,9 @@ namespace ThrottleControlledAvionics
 			TargetOrbit.Inclination.ClampValue();
 		}
 
-		protected override void reset()
+		protected override void Reset()
 		{
-			base.reset();
+			base.Reset();
 			update_limits();
 			ToOrbit = null;
 			Target = Vector3d.zero;
@@ -168,7 +168,6 @@ namespace ThrottleControlledAvionics
 
 		protected override void Update()
 		{
-			if(!IsActive) return;
 			switch(stage)
 			{
 			case Stage.Start:
@@ -213,15 +212,15 @@ namespace ThrottleControlledAvionics
 				else circularize(ApAUT);
 				break;
 			case Stage.ChangeApA:
-				Status("Achieving target apoapsis...");
+                TmpStatus("Achieving target apoapsis...");
 				if(CFG.AP1[Autopilot1.Maneuver]) break;
 				circularize(VSL.Physics.UT+VesselOrbit.timeToAp);
 				stage = Stage.Circularize;
 				break;
 			case Stage.Circularize:
-				Status("Circularization...");
+                TmpStatus("Circularization...");
 				if(CFG.AP1[Autopilot1.Maneuver]) break;
-				CFG.AP2.Off();
+                Disable();
 				ClearStatus();
 				break;
 			}
@@ -229,8 +228,8 @@ namespace ThrottleControlledAvionics
 
 		void toggle_orbit_editor()
 		{
-			ShowEditor = !ShowEditor;
-			if(ShowEditor) update_limits();
+			ShowOptions = !ShowOptions;
+			if(ShowOptions) update_limits();
 		}
 
 		public override void Draw()
@@ -246,7 +245,7 @@ namespace ThrottleControlledAvionics
 			#endif
 			if(stage == Stage.None)
 			{
-				if(Utils.ButtonSwitch("ToOrbit", ShowEditor, 
+				if(Utils.ButtonSwitch("ToOrbit", ShowOptions, 
 				                   	  "Achieve a circular orbit with desired radius and inclination", 
 				                      GUILayout.ExpandWidth(true)))
 					toggle_orbit_editor();
@@ -256,23 +255,24 @@ namespace ThrottleControlledAvionics
 				toggle_orbit_editor();
 		}
 
-		public void DrawOrbitEditor()
+		public void DrawOptions()
 		{
 			GUILayout.BeginVertical();
 			TargetOrbit.Draw();
 			GUILayout.BeginHorizontal();
-			ShowEditor = !GUILayout.Button("Cancel", Styles.active_button, GUILayout.ExpandWidth(true));
+			ShowOptions = !GUILayout.Button("Cancel", Styles.active_button, GUILayout.ExpandWidth(true));
 			if(stage != Stage.None && 
 			   GUILayout.Button("Abort", Styles.danger_button, GUILayout.ExpandWidth(true)))
 			{
-				ShowEditor = false;
+				ShowOptions = false;
 				CFG.AP2.XOff();
 			}
 			if(GUILayout.Button(stage == Stage.None? "Launch" : "Change", 
 			                    Styles.confirm_button, GUILayout.ExpandWidth(true)))
 			{
-				ShowEditor = false;
-				CFG.AP2.XOn(Autopilot2.ToOrbit);
+				ShowOptions = false;
+                TargetOrbit.UpdateValues();
+                VSL.Engines.ActivateEnginesAndRun(() => CFG.AP2.XOn(Autopilot2.ToOrbit));
 			}
 			GUILayout.EndHorizontal();
 			GUILayout.EndVertical();
@@ -293,30 +293,34 @@ namespace ThrottleControlledAvionics
 			Inclination.UpdateValue();
 		}
 
-		public void Draw(bool show_set_buttons = true)
+		public void Draw()
 		{
 			GUILayout.BeginHorizontal();
-			GUILayout.Label("Radius:", GUILayout.ExpandWidth(false));
-			GUILayout.FlexibleSpace();
-			ApA.Draw("km", show_set_buttons, 5);
-			GUILayout.EndHorizontal();
-			GUILayout.BeginHorizontal();
-			GUILayout.Label("Inclination:", GUILayout.ExpandWidth(false));
-			GUILayout.FlexibleSpace();
-			if(GUILayout.Button(new GUIContent(DescendingNode? "DN" : "AN", "Launch from Ascending or Descending Node?"), 
-			                    DescendingNode? Styles.danger_button : Styles.enabled_button,
-			                    GUILayout.ExpandWidth(false)))
-				DescendingNode = !DescendingNode;
-			if(GUILayout.Button(new GUIContent(RetrogradeOrbit? "RG" : "PG", "Prograde or retrograde orbit?"), 
-			                    RetrogradeOrbit? Styles.danger_button : Styles.enabled_button,
-			                    GUILayout.ExpandWidth(false)))
-				RetrogradeOrbit = !RetrogradeOrbit;
-			Inclination.Draw("°", show_set_buttons, 5);
-			GUILayout.EndHorizontal();
-			GUILayout.BeginHorizontal();
-			GUILayout.Label("Steepness:", GUILayout.ExpandWidth(false));
-			GUILayout.FlexibleSpace();
-			Slope.Draw("%", show_set_buttons, 5);
+            GUILayout.BeginVertical();
+            GUILayout.Label("Radius:", GUILayout.ExpandWidth(true));
+            GUILayout.Label("Inclination:", GUILayout.ExpandWidth(true));
+            GUILayout.Label("Steepness:", GUILayout.ExpandWidth(true));
+            GUILayout.EndVertical();
+            GUILayout.BeginVertical();
+            GUILayout.FlexibleSpace();
+            GUILayout.BeginHorizontal();
+            GUILayout.FlexibleSpace();
+            if(GUILayout.Button(new GUIContent(DescendingNode? "DN" : "AN", "Launch from Ascending or Descending Node?"), 
+                                DescendingNode? Styles.danger_button : Styles.enabled_button,
+                                GUILayout.ExpandWidth(false)))
+                DescendingNode = !DescendingNode;
+            if(GUILayout.Button(new GUIContent(RetrogradeOrbit? "RG" : "PG", "Prograde or retrograde orbit?"), 
+                                RetrogradeOrbit? Styles.danger_button : Styles.enabled_button,
+                                GUILayout.ExpandWidth(false)))
+                RetrogradeOrbit = !RetrogradeOrbit;
+            GUILayout.EndHorizontal();
+            GUILayout.FlexibleSpace();
+            GUILayout.EndVertical();
+            GUILayout.BeginVertical();
+			ApA.Draw("km", 5, suffix_width: 25);
+            Inclination.Draw("°", 5, suffix_width: 25);
+            Slope.Draw("%", 5, suffix_width: 25);
+            GUILayout.EndVertical();
 			GUILayout.EndHorizontal();
 		}
 	}

@@ -10,6 +10,7 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
+using AT_Utils;
 
 namespace ThrottleControlledAvionics
 {
@@ -17,6 +18,8 @@ namespace ThrottleControlledAvionics
 	{
 		static RCSOptimizer.Config RCS { get { return Globals.Instance.RCS; } }
 		public RCSOptimizer(ModuleTCA tca) : base(tca) {}
+
+        public override void Disable() {}
 
 		static bool optimization_pass(IList<RCSWrapper> engines, int num_engines, Vector3 target, float target_m, float eps)
 		{
@@ -53,7 +56,7 @@ namespace ThrottleControlledAvionics
 				cur_imbalance = Vector3.zero;
 				for(int j = 0; j < num_engines; j++) 
 				{ var e = engines[j]; cur_imbalance += e.Torque(e.limit); }
-				angle  = zero_torque? 0f : Vector3.Angle(cur_imbalance, needed_torque);
+				angle  = zero_torque? 0f : Utils.Angle2(cur_imbalance, needed_torque);
 				target = needed_torque-cur_imbalance;
 				error  = VSL.Torque.AngularAcceleration(target).magnitude;
 				//remember the best state
@@ -105,6 +108,7 @@ namespace ThrottleControlledAvionics
 				for(int i = 0; i < VSL.Engines.NumActiveRCS; i++)
 				{ needed_torque += VSL.Engines.ActiveRCS[i].currentTorque; }
 				needed_torque = Vector3.Project(needed_torque, VSL.Controls.Steering);
+                needed_torque = VSL.Torque.RCSLimits.Clamp(needed_torque);
 			}
 			//optimize engines; if failed, set the flag and kill torque if requested
 			if(!Optimize(VSL.Engines.ActiveRCS, needed_torque) && !needed_torque.IsZero())

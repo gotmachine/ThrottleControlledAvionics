@@ -43,6 +43,7 @@ namespace ThrottleControlledAvionics
         public float  vLift { get; private set; } //current vertical lift kN
         public Vector3 AeroForce { get; private set; } //current lift+drag vector
         public Vector3 AeroTorque { get; private set; } //current torque produced by aero forcess
+        public Vector3 MaxAeroForceL { get; private set; } //local statistically maximum aero force
 
 		public float   MaxTWR { get; private set; }
 		public float   MaxDTWR { get; private set; }
@@ -117,6 +118,7 @@ namespace ThrottleControlledAvionics
 		public override void Clear()
 		{
 			GearDeployTime = 0;
+            MaxAeroForceL = Vector3.zero;
 			HaveLandingGear = false;
 			HaveLaunchClamps = false;
 			LaunchClamps.Clear();
@@ -163,10 +165,15 @@ namespace ThrottleControlledAvionics
 
 		public override void Update()
 		{
-			CurrentThrustAccelerationTime = 0f; CurrentThrustDecelerationTime = 0f; TWRf = 1;
+            TWRf = 1;
+			CurrentThrustAccelerationTime = 0f; 
+            CurrentThrustDecelerationTime = 0f;
             update_aero_forces();
 			//calculate total downward thrust and slow engines' corrections
             AeroForce = Lift+Drag;
+            var relAeroForce = AeroForce/(float)Utils.ClampL(VSL.vessel.dynamicPressurekPa, 1);
+            if(relAeroForce.sqrMagnitude > MaxAeroForceL.sqrMagnitude)
+                MaxAeroForceL = VSL.LocalDir(relAeroForce);
             vLift = Vector3.Dot(AeroForce, VSL.Physics.Up);
             MaxTWR = (VSL.Engines.MaxThrustM+Mathf.Max(vLift, 0))/VSL.Physics.mg;
             DTWR = Mathf.Max((vLift-Vector3.Dot(VSL.Engines.Thrust, VSL.Physics.Up))/VSL.Physics.mg, 0);
@@ -220,8 +227,9 @@ namespace ThrottleControlledAvionics
 				if(CurrentThrustDecelerationTime > 0) 
                     CurrentThrustDecelerationTime = rel_slow_thrust/CurrentThrustDecelerationTime*GLB.VSC.DSf;
 				//TWR factor
-				var vsf = CFG.VSCIsActive && VSL.VerticalSpeed.Absolute < 0? 
-					Utils.Clamp(1-(Utils.ClampH(CFG.VerticalCutoff, 0)-VSL.VerticalSpeed.Absolute)/GLB.TDC.VSf, 1e-9f, 1) : 1;
+				var vsf = 1f;
+                if(VSL.VerticalSpeed.Absolute < 0)
+                    vsf = Utils.Clamp(1 -(Utils.ClampH(CFG.VerticalCutoff, 0)-VSL.VerticalSpeed.Absolute)/GLB.TDC.VSf, 1e-9f, 1);
 				var twr = VSL.Engines.Slow? DTWR_filter.Value : MaxTWR*Utils.Sin45; //MaxTWR at 45deg
 				TWRf = Utils.Clamp(twr/GLB.TDC.TWRf, 1e-9f, 1)*vsf;
 			}
@@ -250,11 +258,10 @@ namespace ThrottleControlledAvionics
 		public delegate bool ParachuteCondition(Parachute p);
 		void activate_parachutes(ParachuteCondition cond = null)
 		{
-			var P = vessel.staticPressurekPa*Parachute.Atm; //atm
 			for(int i = 0, count = UnusedParachutes.Count; i < count; i++)
 			{
 				var p = UnusedParachutes[i];
-				if(p.CanBeDeployed(P) && (cond == null || cond(p)))
+				if(cond == null || cond(p))
 					p.parachute.Deploy();
 			}
 		}
@@ -274,8 +281,9 @@ namespace ThrottleControlledAvionics
 
 		public void ActivateParachutesASAP()
 		{
+            var P = vessel.staticPressurekPa*Parachute.Atm; //atm
 			if(CFG.AutoParachutes) 
-				activate_parachutes();
+                activate_parachutes(p => p.CanBeDeployed(P));
 		}
 
 		public void CutActiveParachutes()

@@ -30,6 +30,9 @@ namespace ThrottleControlledAvionics
 		public Vessel vessel { get; private set; }
 		public Transform refT; //transform of the controller-part
 
+        public FlightCtrlState PreUpdateControls;
+        public FlightCtrlState PostUpdateControls;
+
 		public PhysicalProps        Physics;
 		public AltitudeProps        Altitude;
 		public VerticalSpeedProps   VerticalSpeed;
@@ -52,21 +55,11 @@ namespace ThrottleControlledAvionics
 		public bool InOrbit { get; private set; }
 		public bool IsActiveVessel { get; private set; }
 		public bool LandedOrSplashed { get { return vessel.LandedOrSplashed; } }
-		public bool PauseWhenStopped = false;
+        public Vessel.Situations Situation { get { return vessel.situation; } }
 
-		public HashSet<TCAModule> TargetUsers = new HashSet<TCAModule>();
-		public ITargetable Target { get { return vessel.targetObject ?? NavWayPoint; } set { vessel.targetObject = value; } }
-		public Vessel TargetVessel { get { return vessel.targetObject == null? null : vessel.targetObject.GetVessel(); } }
-		public bool TargetIsNavPoint { get { return vessel.targetObject == null && NavWaypoint.fetch != null && NavWaypoint.fetch.IsActive; } }
-		public bool TargetIsWayPoint { get { return vessel.targetObject is WayPoint; } }
-		public bool HasTarget 
-		{ 
-			get 
-			{ 
-				return vessel.targetObject != null && !(vessel.targetObject is CelestialBody) 
-					|| NavWaypoint.fetch != null && NavWaypoint.fetch.IsActive; 
-			} 
-		}
+        public bool AutopilotDisabled;
+        public bool HasUserInput;
+
 		public bool HasManeuverNode 
 		{ 
 			get 
@@ -76,8 +69,79 @@ namespace ThrottleControlledAvionics
 					vessel.patchedConicSolver.maneuverNodes[0] != null; 
 			} 
 		}
-		public ManeuverNode FirstManeuverNode { get { return vessel.patchedConicSolver.maneuverNodes[0]; } }
-		public Vessel.Situations Situation { get { return vessel.situation; } }
+		public ManeuverNode FirstManeuverNode 
+        { get { return vessel.patchedConicSolver.maneuverNodes[0]; } }
+		
+
+        #region Target
+        public HashSet<TCAModule> TargetUsers = new HashSet<TCAModule>();
+
+        public ITargetable Target 
+        { 
+            get 
+            { 
+                var t = vessel.targetObject;
+                if(t == null || t is CelestialBody)
+                {
+                    t = NavWayPoint ?? CFG.Target;
+                    if(t == null && CFG.Path.Count > 0)
+                        t = CFG.Path.Peek();
+                }
+                return t;
+            } 
+            set 
+            { 
+                vessel.targetObject = value; 
+            } 
+        }
+
+        public bool HasTarget 
+        { 
+            get 
+            { 
+                return 
+                    vessel.targetObject != null && 
+                    !(vessel.targetObject is CelestialBody) || 
+                    NavWaypoint.fetch != null && NavWaypoint.fetch.IsActive ||
+                    CFG.Target || 
+                    CFG.Path.Count > 0;
+            } 
+        }
+
+        public Vessel TargetVessel 
+        { 
+            get 
+            { 
+                var t = Target;
+                return t == null? null : t.GetVessel();
+            } 
+        }
+
+        public bool TargetIsNavPoint 
+        { 
+            get 
+            { 
+                return 
+                    vessel.targetObject == null && 
+                    NavWaypoint.fetch != null && 
+                    NavWaypoint.fetch.IsActive; 
+            } 
+        }
+
+        public bool TargetIsWayPoint { get { return Target is WayPoint; } }
+
+        public void UpdateTarget(WayPoint wp)
+        {
+            if(wp != null && CFG.Target && wp != CFG.Target)
+            {
+                var t = wp.GetTarget();
+                if(IsActiveVessel)
+                    FlightGlobals.fetch.SetVesselTarget(t, true);
+                else Target = t;
+                CFG.Target = wp;
+                CFG.Target.Update(this);
+            }
+        }
 
 		public void SetTarget(TCAModule user, WayPoint wp = null)
 		{
@@ -97,12 +161,10 @@ namespace ThrottleControlledAvionics
 					TargetUsers.Add(user);
 				var t = wp.GetTarget();
 				if(IsActiveVessel && wp != CFG.Target)
-//                {
                     FlightGlobals.fetch.SetVesselTarget(t, true);
-//					Utils.Message("Target: {0}", t.GetName());
-//                }
 				else Target = t;
 				CFG.Target = wp;
+                CFG.Target.Update(this);
 			}
 		}
 
@@ -112,7 +174,7 @@ namespace ThrottleControlledAvionics
 			{
 				var t = Target;
 				if(t == null) return null;
-				return t as WayPoint ??  new WayPoint(t);
+				return t as WayPoint ?? new WayPoint(t);
 			}
 		}
 
@@ -127,6 +189,7 @@ namespace ThrottleControlledAvionics
 				return wp;
 			}
 		}
+        #endregion
 
 		#region Utils
 		public void Log(string msg, params object[] args) { vessel.Log(msg, args); }
@@ -186,7 +249,7 @@ namespace ThrottleControlledAvionics
 			create_props();
 			OnPlanet = vessel.OnPlanet();
 			InOrbit = vessel.InOrbit();
-			UpdateState();
+            PreUpdateState(vessel.ctrlState);
 			UpdatePhysics();
 			UpdateParts();
 		}
@@ -196,7 +259,6 @@ namespace ThrottleControlledAvionics
 			UpdateCommons();
 			OnPlanetParams.Update();
 			Geometry.Update();
-			vessel.OnAutopilotUpdate += UpdateAutopilotInfo;
 		}
 
 		public void ConnectAutopilotOutput()
@@ -204,22 +266,8 @@ namespace ThrottleControlledAvionics
 
 		public void Reset()
 		{
-			vessel.OnAutopilotUpdate -= UpdateAutopilotInfo;
 			vessel.OnAutopilotUpdate -= ApplyAutopilotSteering;
 			RestoreUnpackDistance();
-		}
-
-		public bool AutopilotDisabled;
-		public bool HasUserInput;
-		public void UpdateAutopilotInfo(FlightCtrlState s)
-		{
-			if(!CFG.Enabled) return;
-			Controls.GimbalLimit = 100;
-			HasUserInput = 
-				!Mathfx.Approx(s.pitch, s.pitchTrim, 0.01f) ||
-				!Mathfx.Approx(s.roll, s.rollTrim, 0.01f) ||
-				!Mathfx.Approx(s.yaw, s.yawTrim, 0.01f);
-			AutopilotDisabled = HasUserInput;
 		}
 
 		public void ApplyAutopilotSteering(FlightCtrlState s)
@@ -228,12 +276,18 @@ namespace ThrottleControlledAvionics
 			s.pitch = Utils.Clamp(Controls.AutopilotSteering.x, -1, 1);
 			s.roll  = Utils.Clamp(Controls.AutopilotSteering.y, -1, 1);
 			s.yaw   = Utils.Clamp(Controls.AutopilotSteering.z, -1, 1);
-			Controls.AutopilotSteering = Vector3.zero;
 		}
 
-		public void UpdateState()
+        public void PreUpdateState(FlightCtrlState s)
 		{
+            //update control info
+            PreUpdateControls = s;
             IsActiveVessel = vessel != null && vessel == FlightGlobals.ActiveVessel;
+            HasUserInput = 
+                !Mathfx.Approx(PreUpdateControls.pitch, PreUpdateControls.pitchTrim, 0.01f) ||
+                !Mathfx.Approx(PreUpdateControls.roll, PreUpdateControls.rollTrim, 0.01f) ||
+                !Mathfx.Approx(PreUpdateControls.yaw, PreUpdateControls.yawTrim, 0.01f);
+            AutopilotDisabled = HasUserInput;
 			//update onPlanet state
 			var on_planet = vessel.OnPlanet();
 			var in_orbit = vessel.InOrbit();
@@ -259,17 +313,29 @@ namespace ThrottleControlledAvionics
 			InOrbit = in_orbit;
 		}
 
+        public void PostUpdateState(FlightCtrlState s)
+        {
+            PostUpdateControls = s;
+            Controls.Update(s);
+        }
+
 		public void UpdatePhysics()
 		{
 			Physics.Update();
 			Altitude.Update();
-			if(CFG.Target != null) 
+			if(CFG.Target)
+            {
 				CFG.Target.Update(this);
+                if(!CFG.Target.Valid)
+                {
+                    CFG.Target = null;
+                    TargetUsers.Clear();
+                }
+            }
 		}
 
 		public void UpdateCommons()
 		{
-			Controls.Update();
 			Engines.Sort();
 			Engines.Update();
 			Torque.Update();
@@ -290,11 +356,11 @@ namespace ThrottleControlledAvionics
 
 		public void OnModulesUpdated()
 		{
-			if(PauseWhenStopped)
+			if(Controls.PauseWhenStopped)
 			{
 				if(!(CFG.AP1 || CFG.AP2 || HorizontalSpeed.Mooving))
 				{
-					PauseWhenStopped = false;
+                    Controls.PauseWhenStopped = false;
 					PauseMenu.Display();
 				}
 			}
@@ -341,8 +407,6 @@ namespace ThrottleControlledAvionics
 			}
 			Physics.AngularDrag /= drag_parts;
 			Engines.Clusters.Update();
-			//test: adjusting vessel stage seems to be not that strightforward
-			Log("max active stage {}, vessel stage {}", max_active_stage, vessel.currentStage);//debug
 			if(max_active_stage >= 0 && 
 			   (vessel.currentStage < 0 || vessel.currentStage > max_active_stage))
 				vessel.currentStage = StageManager.RecalculateVesselStaging(vessel);
@@ -353,7 +417,7 @@ namespace ThrottleControlledAvionics
 		bool stage_is_empty(int stage)
 		{ return !vessel.parts.Any(p => p.hasStagingIcon && p.inverseStage == stage); }
 
-		void activate_next_stage()
+		public void ActivateNextStageImmidiate()
 		{
 			var next_stage = vessel.currentStage;
 			while(next_stage >= 0 && stage_is_empty(next_stage)) next_stage--;
@@ -377,7 +441,13 @@ namespace ThrottleControlledAvionics
 			}
 		}
 		readonly ActionDamper next_cooldown = new ActionDamper(0.5);
-		public void ActivateNextStage() { next_cooldown.Run(activate_next_stage); }
+		public void ActivateNextStage() { next_cooldown.Run(ActivateNextStageImmidiate); }
+
+        public void XToggleWithEngines<T>(Multiplexer<T> mp, T cmd) where T : struct
+        {
+            if(mp[cmd]) mp.XOff();
+            else Engines.ActivateEnginesAndRun(() => mp.XOn(cmd));
+        }
 
 		public void GearOn(bool enable = true)
 		{

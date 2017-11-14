@@ -32,8 +32,12 @@ namespace ThrottleControlledAvionics
 		Vector3 DeltaV;
 		public void AddDeltaV(Vector3 dV) { DeltaV += dV; }
 
-		public void Off() 
-		{ DeltaV = Vector3.zero; Translation = Vector3.zero; pid.Reset(); }
+        public override void Disable()
+		{ 
+            DeltaV = Vector3.zero; 
+            Translation = Vector3.zero; 
+            pid.Reset(); 
+        }
 
 
 		public override void Init()
@@ -46,13 +50,10 @@ namespace ThrottleControlledAvionics
 		{ 
 			base.UpdateState();
 			IsActive &= VSL.Controls.TranslationAvailable;
-			if(IsActive) return;
-			Off();
 		}
 
-		protected override void OnAutopilotUpdate(FlightCtrlState s)
+		protected override void OnAutopilotUpdate()
 		{
-			if(!IsActive) return;
 			var dVm = DeltaV.magnitude;
 			if(dVm >= TRA.MinDeltaV)
 			{
@@ -61,7 +62,7 @@ namespace ThrottleControlledAvionics
 			}
 			else pid.Reset();
 			if(!Translation.IsZero())
-			{ s.X = Translation.x; s.Z = Translation.y; s.Y = Translation.z; }
+			{ CS.X = Translation.x; CS.Z = Translation.y; CS.Y = Translation.z; }
 			Translation = Vector3.zero;
 			DeltaV = Vector3.zero;
 		}

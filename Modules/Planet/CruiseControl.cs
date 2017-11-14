@@ -42,10 +42,15 @@ namespace ThrottleControlledAvionics
 			CFG.HF.AddHandler(this, HFlight.CruiseControl);
 		}
 
+        public override void Disable()
+        {
+            CFG.HF.OffIfOn(HFlight.CruiseControl);
+        }
+
 		protected override void UpdateState() 
 		{ 
 			base.UpdateState();
-			IsActive &= VSL.OnPlanet && CFG.HF[HFlight.CruiseControl]; 
+            IsActive &= VSL.refT != null && VSL.OnPlanet && CFG.HF[HFlight.CruiseControl]; 
 			if(!inited && IsActive && !VSL.Physics.Up.IsZero())
 			{
 				UpdateNeededVelocity();
@@ -60,26 +65,26 @@ namespace ThrottleControlledAvionics
 			{
 			case Multiplexer.Command.Resume:
 				RegisterTo<SASBlocker>();
-				NeedRadarWhenMooving();
+				NeedCPSWhenMooving();
 				break;
 
 			case Multiplexer.Command.On:
 				VSL.UpdateOnPlanetStats();
 				var nV = VSL.HorizontalSpeed.Absolute;
 				if(nV > GLB.PN.MaxSpeed) nV = GLB.PN.MaxSpeed;
-                if(nV > CC.MaxIdleSpeed)
-                    VSL.HorizontalSpeed.SetNeeded(VSL.HorizontalSpeed.Vector.normalized*nV);
-                else
-                    VSL.HorizontalSpeed.SetNeeded(VSL.OnPlanetParams.Fwd*nV);
-				CFG.MaxNavSpeed = needed_velocity = nV;
+                var nVdir = nV > CC.MaxIdleSpeed?
+                    (Vector3)VSL.HorizontalSpeed.Vector.normalized :
+                    VSL.OnPlanetParams.Fwd;
 				CFG.BR.OnIfNot(BearingMode.User);
-				BRC.UpdateBearing((float)VSL.Physics.Bearing(VSL.HorizontalSpeed.Vector));
+                BRC.UpdateBearing((float)VSL.Physics.Bearing(nVdir));
+                VSL.HorizontalSpeed.SetNeeded(nVdir*nV);
+                CFG.MaxNavSpeed = needed_velocity = nV;
 				goto case Multiplexer.Command.Resume;
 
 			case Multiplexer.Command.Off:
 				VSL.HorizontalSpeed.SetNeeded(Vector3d.zero);
 				UnregisterFrom<SASBlocker>();
-				UnregisterFrom<Radar>();
+				ReleaseCPS();
 				CFG.BR.OffIfOn(BearingMode.User);
 				break;
 			}
@@ -87,9 +92,9 @@ namespace ThrottleControlledAvionics
 
 		public void UpdateNeededVelocity()
 		{
-			SetNeededVelocity(CFG.NeededHorVelocity.IsZero()? 
-			                  Vector3.zero : 
-			                  Quaternion.FromToRotation(CFG.SavedUp, VSL.Physics.Up)*CFG.NeededHorVelocity);
+            SetNeededVelocity(CFG.MaxNavSpeed.Equals(0)? 
+			                  Vector3d.zero : 
+                              VSL.Physics.Direction(BRC.Bearing));
 		}
 
 		void SetNeededVelocity(Vector3d nV)
@@ -106,20 +111,17 @@ namespace ThrottleControlledAvionics
 			else VSL.HorizontalSpeed.SetNeeded(BRC.ForwardDirection*CFG.MaxNavSpeed);
 		}
 
-		protected override void OnAutopilotUpdate(FlightCtrlState s)
+		protected override void OnAutopilotUpdate()
 		{
-			//need to check all the prerequisites, because the callback is called asynchroniously
-			if(!(CFG.Enabled && VSL.OnPlanet && VSL.refT != null &&
-			     CFG.HF[HFlight.CruiseControl])) return;
 			if(VSL.HasUserInput) 
 			{ 
-				if(!s.pitch.Equals(0))
+				if(!CS.pitch.Equals(0))
 				{
-					CFG.MaxNavSpeed = Utils.Clamp(CFG.MaxNavSpeed-s.pitch*CC.PitchFactor, CC.MaxRevSpeed, GLB.PN.MaxSpeed);
+					CFG.MaxNavSpeed = Utils.Clamp(CFG.MaxNavSpeed-CS.pitch*CC.PitchFactor, CC.MaxRevSpeed, GLB.PN.MaxSpeed);
 					SetNeededVelocity(VSL.HorizontalSpeed.NeededVector);
-					VSL.HasUserInput = !(s.yaw.Equals(0) && s.roll.Equals(0));
+					VSL.HasUserInput = !(CS.yaw.Equals(0) && CS.roll.Equals(0));
 					VSL.AutopilotDisabled = VSL.HasUserInput;
-					s.pitch = 0;
+					CS.pitch = 0;
 				}
 			}
 			else if(!needed_velocity.Equals(CFG.MaxNavSpeed))

@@ -27,7 +27,7 @@ namespace ThrottleControlledAvionics
 		{
 			Vector = Vector3d.Exclude(VSL.Physics.Up, vessel.srf_velocity);
 			Absolute = (float)Vector.magnitude;
-			Mooving = Absolute > GLB.HSC.TranslationLowerThreshold;
+			Mooving = Absolute > GLB.HSC.TranslationMinDeltaV;
 			MoovingFast = Absolute > GLB.RAD.MinClosingSpeed;
 		}
 
@@ -36,8 +36,6 @@ namespace ThrottleControlledAvionics
 
 		public void SetNeeded(Vector3d nV)
 		{
-			CFG.SavedUp = VSL.Physics.Up;
-			CFG.NeededHorVelocity = nV;
 			NeededVector = nV;
 		}
 	}
